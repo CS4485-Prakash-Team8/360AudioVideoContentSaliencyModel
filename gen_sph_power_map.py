@@ -112,6 +112,26 @@ def k_weight_filter(audio, rate):
 
     return filtered_audio
 
+# Sum data to mono, k-weight filter it, short time fourier transform based on window given in args,
+# Generate mel spec filter banks, place stft data in filter banks, convert to dB, normalize for cnn(0-1), return array
+# Just put placeholder defaults in for now 
+def wav_to_logmel(wav, sr, bins=20, win_len=400, hop_len=400):
+    duration = wav.shape[0] / float(sr)
+
+    mel_data = librosa.to_mono(wav) #needed to transpose this for load_wav, but not sure if you will need it here, just make arg wav.T if so
+    mel_data = k_weight_filter(mel_data, sr)
+    
+    #deprecated
+    #stft = np.abs(librosa.stft(mel_data, n_fft=win_len, hop_length=hop_len, win_length=win_len)) ** 2
+    #filter_banks = librosa.filters.mel(sr=sr, n_fft=win_len, n_mels=bins, fmin=20.0, fmax=20000.0)
+    #mel_spec = np.dot(filter_banks, stft)
+    
+    mel_spec = librosa.feature.melspectrogram(y=mel_data, sr=sr, n_fft=win_len, hop_length=hop_len, n_mels=bins, fmin=20.0, fmax=20000.0, power=2.0)
+    
+    log_mel = librosa.power_to_db(mel_spec, ref=np.max).astype(np.float32)
+    log_mel = np.clip((log_mel + 80.0) / 80.0, 0.0, 1.0)
+    return log_mel
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('input_fn',    help='Input ambisonics filename.')
