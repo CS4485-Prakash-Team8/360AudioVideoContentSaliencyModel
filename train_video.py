@@ -1,4 +1,4 @@
-# train_cube.py
+# train_video.py
 """
 Train a cube-padded UNet on 360° saliency.
 - Projects equirect frames to 6 cube faces (size S=120) with Equi2Cube
@@ -6,7 +6,7 @@ Train a cube-padded UNet on 360° saliency.
 - Projects prediction back to equirect (240x480) with Cube2Equi
 - Computes SphereMSE on equirect (area-weighted)
 Run:
-  python train_cube.py
+  python train_video.py
 """
 
 import os
@@ -193,3 +193,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
