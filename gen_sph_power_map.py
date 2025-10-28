@@ -3,6 +3,7 @@ import numpy as np
 import csv
 import librosa
 import scipy.signal as sgnl
+import torch
 
 from distance import SphericalAmbisonicsVisualizer, SphericalSourceVisualizer
 from audio import load_wav
@@ -12,7 +13,6 @@ from matplotlib.colors import Normalize
 from io import BytesIO
 from PIL import Image
 
-#TODO: add mel_output_fn to args, add mel writes to a different csv, or just set up a way to pass the npy arrays to LSTM eventually
 def run(input_fn, output_fn, position_fn='', angular_res='', csv_output='frame_data.csv'):
     
     data, rate = load_wav(input_fn)
@@ -113,9 +113,9 @@ def k_weight_filter(audio, rate):
     return filtered_audio
 
 # Sum data to mono, k-weight filter it, short time fourier transform based on window given in args,
-# Generate mel spec filter banks, place stft data in filter banks, convert to dB, normalize for cnn(0-1), return array
+# Generate mel spec filter banks, place stft data in filter banks, convert to dB, normalize for cnn(0-1), numpy to tensor for CNN, return tensor to float
 # Just put placeholder defaults in for now 
-def wav_to_logmel(wav, sr, bins=20, win_len=400, hop_len=400):
+def wav_to_logmel_tensor(wav, sr, bins=20, win_len=400, hop_len=400):
     duration = wav.shape[0] / float(sr)
 
     mel_data = librosa.to_mono(wav) #needed to transpose this for load_wav, but not sure if you will need it here, just make arg wav.T if so
@@ -130,7 +130,9 @@ def wav_to_logmel(wav, sr, bins=20, win_len=400, hop_len=400):
     
     log_mel = librosa.power_to_db(mel_spec, ref=np.max).astype(np.float32)
     log_mel = np.clip((log_mel + 80.0) / 80.0, 0.0, 1.0)
-    return log_mel
+    log_mel_tensor = torch.from_numpy(log_mel.copy()).unsqueeze(0).unsqueeze(0)
+    return log_mel_tensor.float()
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
