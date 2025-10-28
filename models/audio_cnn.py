@@ -33,7 +33,7 @@ class CNNAudio(nn.Module):
         #allows any spectogram size to be input
         self.gap = nn.AdaptiveAvgPool2d((1, 1))  
         self.fc  = nn.Linear(128, 1)              # size no longer depends on H×W
-        self.out = nn.Sigmoid()
+        self.out = nn.Sigmoid()  # sigmoid functinos turns score into probability
 
     #passing the filters one at a time
     def forward(self, x):
@@ -50,3 +50,4 @@ class CNNAudio(nn.Module):
 if __name__ == "__main__":
     
     ## NOT SURE WHERe TO GO FROM HERE FOR MAIN 
+
