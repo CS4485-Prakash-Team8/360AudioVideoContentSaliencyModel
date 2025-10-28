@@ -1,8 +1,8 @@
-# cnn_article_bn.py
+# CNN for Audio 
 import torch
 import torch.nn as nn
 
-class CNNNetwork(nn.Module):
+class CNNAudio(nn.Module):
     def __init__(self):
         super().__init__()
         self.conv1 = nn.Sequential(
