@@ -51,3 +51,21 @@ if __name__ == "__main__":
     
     ## NOT SURE WHERe TO GO FROM HERE FOR MAIN 
 
+'''
+just putting this here for reference on how to call the functions to get features
+
+from distance import SphericalAmbisonicsVisualizer
+from audio import load_wav
+
+#arg to down sample to 16k
+data, sr = load_wav(filename, 16000)
+
+ambiVis = SphericalAmbisonicsVisualizer(data, rate = sr)
+
+#gives tensors that contain the wav given(or chunk of wav given) at defined sample rate(if downsampled)
+#Since I'm not 100% on what shape the tensors need to be for these, the formatting in the function may need to be changed
+spatial = ambi_to_tensor(ambiVis)
+#make sure that sr is what the pretrained expects and to set bins, win_len, and hop_len to what the pretrained expects as well
+logmel = wav_to_logmel_tensor(data, sr)
+
+'''

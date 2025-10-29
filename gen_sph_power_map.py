@@ -116,7 +116,6 @@ def k_weight_filter(audio, rate):
 # Generate mel spec filter banks, place stft data in filter banks, convert to dB, normalize for cnn(0-1), numpy to tensor for CNN, return tensor to float
 # Just put placeholder defaults in for now 
 def wav_to_logmel_tensor(wav, sr, bins=20, win_len=400, hop_len=400):
-    duration = wav.shape[0] / float(sr)
 
     mel_data = librosa.to_mono(wav) #needed to transpose this for load_wav, but not sure if you will need it here, just make arg wav.T if so
     mel_data = k_weight_filter(mel_data, sr)
@@ -133,6 +132,18 @@ def wav_to_logmel_tensor(wav, sr, bins=20, win_len=400, hop_len=400):
     log_mel_tensor = torch.from_numpy(log_mel.copy()).unsqueeze(0).unsqueeze(0)
     return log_mel_tensor.float()
 
+# This uses the same logic as the run function above to get the energy map, takes those coefficients as vectors, stack them for each frame step
+# then converts to torch.float32 and returns tensor
+def ambi_to_tensor(ambiVis):
+    frames = []
+    while True:
+        frame = ambiVis.get_next_frame()
+        if frame is None:
+            break
+        vec = frame.flatten()
+        frames.append(vec)
+    frames = np.stack(frames, axis=0)
+    return torch.from_numpy(frames).float()
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
