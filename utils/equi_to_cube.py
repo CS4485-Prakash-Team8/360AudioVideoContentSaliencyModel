@@ -5,7 +5,7 @@ import math as m
 from scipy.interpolate import RegularGridInterpolator as interp2d
 from scipy.interpolate import interp1d
 from pylab import *
-from sph_utils import rotx, roty, rotz
+from utils.sph_utils import rotx, roty, rotz
 import pdb
 
 class Equi2Cube:
