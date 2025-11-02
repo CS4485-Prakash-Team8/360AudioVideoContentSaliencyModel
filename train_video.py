@@ -1,6 +1,5 @@
 # train_video.py
 """
-Train a cube-padded UNet on 360° saliency.
 - Projects equirect frames to 6 cube faces (size S=120) with Equi2Cube
 - Runs CNN on faces (with Cube Padding)
 - Projects prediction back to equirect (240x480) with Cube2Equi
@@ -18,7 +17,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms as T
 from torch import optim
 
-from models.video_model import CubeUNet
+from models.video_model import CubeResNetSimple
 from utils.smse import SphereMSE
 from utils.equi_to_cube import Equi2Cube
 from utils.cube_to_equi import Cube2Equi
@@ -33,10 +32,10 @@ EH, EW = 240, 480
 S = 120
 
 # Modify depending on your system
-BATCH = 2
+BATCH = 4
 EPOCHS = 10
 LR = 1e-3
-NUM_WORKERS = 2
+NUM_WORKERS = 4
 
 # 80/20 train/val split of video IDs from ECCV 2018 dataset
 TRAIN_IDS = {
@@ -176,7 +175,7 @@ def main():
 	train_ld = DataLoader(train_ds, batch_size=BATCH, shuffle=True,  num_workers=NUM_WORKERS, pin_memory=True)
 	val_ld   = DataLoader(val_ds,   batch_size=BATCH, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
 
-	model = CubeUNet(in_ch=4, base=32).to(device)
+	model = CubeResNetSimple(in_ch=4, pretrained=True).to(device)
 	criterion = SphereMSE(EH, EW).to(device)
 	optimiz   = optim.SGD(model.parameters(), lr=LR, momentum=0.9, weight_decay=1e-5)
 
@@ -193,4 +192,3 @@ def main():
 
 if __name__ == "__main__":
 	main()
-
