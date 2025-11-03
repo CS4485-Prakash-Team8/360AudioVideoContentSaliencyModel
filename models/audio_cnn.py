@@ -71,9 +71,15 @@ def main():
     print(" Running extract_features (ambisonics + audio features)...")
    
     feats = extract_features(
-        wav=wav, sr=sr, position_fn="", duration=duration,
-        angular_res=10.0, n_fft=512, hop_len=160, win_len=512,
-        n_mels=64, fmin=50.0, fmax=8000.0
+        wav=wav,
+        rate=sr,
+        angular_res=10.0,
+        n_mels=64,
+        win_len=512,
+        n_fft=512,
+        hop_len=160,
+        fmin=50.0,
+        fmax=8000.0
     )
    
     #CONFIRMING values are being called right
