@@ -233,6 +233,81 @@ class AudioReader2:
                 break
             yield chunk
 
+class AudioReader3:
+    def __init__(self, fn, rate=None, pad_start=0, seek=None, duration=None, rotation=None):
+
+        data, r = load_wav(fn, rate)
+        self.data = data                      # (N, C)
+        self.rate = r
+        self.num_frames = data.shape[0]
+        self.num_channels = data.shape[1]
+        self.duration = self.num_frames / float(self.rate)
+
+        self.k = 0
+        self.pad = pad_start
+
+        if seek is not None and seek > 0:
+            n = int(seek * self.rate)
+            n = min(n, self.num_frames)
+            self.data = self.data[n:]
+            self.num_frames = self.data.shape[0]
+
+        if duration is not None:
+            n = int(duration * self.rate)
+            n = min(n, self.num_frames)
+            self.data = self.data[:n]
+            self.num_frames = n
+            self.duration = n / float(self.rate)
+
+        self.rot_mtx = None
+        if rotation is not None:
+            assert self.num_channels > 2
+            c = np.cos(rotation)
+            s = np.sin(rotation)
+            self.rot_mtx = np.array([
+                [1, 0, 0, 0],
+                [0, c, 0, s],
+                [0, 0, 1, 0],
+                [0, -s, 0, c]
+            ])
+
+    def __del__(self):
+        pass
+
+    def get_chunk(self, n=1, force_size=False):
+        if self.k >= self.num_frames:
+            return None
+
+        frames_left = self.num_frames - self.k
+        if force_size and n > frames_left:
+            return None
+
+        pad_chunk = None
+        if self.pad > 0:
+            pad_size = min(n, self.pad)
+            pad_chunk = np.zeros((pad_size, self.num_channels))
+            n -= pad_size
+            self.pad -= pad_size
+
+        chunk_size = min(n, frames_left)
+        chunk = self.data[self.k:self.k + chunk_size]
+        self.k += chunk_size
+
+        if pad_chunk is not None:
+            chunk = np.concatenate((pad_chunk.astype(chunk.dtype), chunk), 0)
+
+        if self.rot_mtx is not None:
+            chunk = np.dot(chunk, self.rot_mtx.T)
+
+        return chunk
+
+    def loop_chunks(self, n=1, force_size=False):
+        while True:
+            chunk = self.get_chunk(n, force_size=False)
+            if chunk is None:
+                break
+            yield chunk
+
 
 def test_audio_reader():
     reader = AudioReader2('/gpu2_data/morgado/spatialaudiogen/youtube/train/687gkvLi5kI/ambix',
