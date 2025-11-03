@@ -22,11 +22,8 @@ def ambi_to_tensor(ambiVis):
 # puts the heatmap to a tensor, then sums the channels mono, gets short time fourier transform, gets magnitudes, computes rms, gets stft^2 for centroid, computes centroid, 
 # gets square of mags, computes onset with that, returns dict of all features needed for the 2 CNNs and concatenator
 # each scalar(rms, centroid, and onset) are given as float32 with tensor of (T,1)
-def extract_features(wav, rate, angular_res=10.0):
+def extract_features(wav, rate, angular_res=10.0, n_mels=64, win_len=512, n_fft=512, hop_len=160, fmin=50.0, fmax=8000.0):
     sr = 16000.0
-    n_fft = 512
-    win_len = 400
-    hop_len = 160
 
     if wav.ndim != 2 or wav.shape[1] != 4:
         raise ValueError(f"extract_features requires FOA (N,4). Got {wav.shape}")
@@ -56,6 +53,12 @@ def extract_features(wav, rate, angular_res=10.0):
     onset = librosa.onset.onset_strength(S=power_spec, sr=sr, hop_length=hop_len, center=False)
     onset = torch.from_numpy(onset[:, None]).float()
 
+    # Log-mel for ResNet-50 (wil need to go back to the old way of making logmel for CNN14 when this is tied in since most of the processes of this function are already done above)
+    mel = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=n_fft, hop_length=hop_len, win_length=win_len, n_mels=n_mels, fmin=fmin, fmax=fmax, power=2.0, center=False)
+
+    logmel_db = librosa.power_to_db(mel, ref=np.max).astype(np.float32)
+    logmel_norm = np.clip((logmel_db + 80.0) / 80.0, 0.0, 1.0).T
+
     # (N,) wav info for what yamnet expects
     y_ten = torch.from_numpy(y.astype("float32"))
 
@@ -64,5 +67,6 @@ def extract_features(wav, rate, angular_res=10.0):
     rms = rms[:size_fix]
     centroid = centroid[:size_fix]
     onset = onset[:size_fix]
+    logmel = torch.from_numpy(logmel_norm[:size_fix].copy()).unsqueeze(0).float()
 
-    return {"wav": y_ten, "spatial": spatial_tensor, "rms": rms, "centroid": centroid, "onset": onset}
+    return {"wav": y_ten, "spatial": spatial_tensor, "rms": rms, "centroid": centroid, "onset": onset, "logmel": logmel}
