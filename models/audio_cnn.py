@@ -1,5 +1,6 @@
 ## ResNet-50 pretrained model, takes in sensor from audio_features and returns the proper embeddings to feed into LSTM and concat
 ## NEXT STEP BEING FEEDING INTO SPATIAL ENCODER ( CONCAT ) 
+## to run : Python -m models.audio_cnn samplespatialaudio/1.wav
 import sys
 import torch
 import torch.nn as nn
