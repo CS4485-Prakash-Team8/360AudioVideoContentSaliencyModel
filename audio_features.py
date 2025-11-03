@@ -1,26 +1,9 @@
 import numpy as np
 import librosa
-import scipy.signal as sgnl
 import torch
+import resampy
 
-from distance import SphericalAmbisonicsVisualizer
-
-# K-weighting filter to get perceived loudness as defined in https://www.itu.int/dms_pubrec/itu-r/rec/bs/r-rec-bs.1770-2-201103-s!!pdf-e.pdf
-# uses the biquad coeffs given on pg 4 and 5
-def k_weight_filter(audio, rate):
-    # high-pass coeffs
-    b_hp = np.array([1.0, -2.0, 1.0])
-    a_hp = np.array([1.0, -1.99004745483398, 0.99007225036621])
-
-    # high-shelf coeffs
-    b_hs = np.array([1.5351248958697, -2.69169618940638, 1.19839281085285])
-    a_hs = np.array([1.0, -1.69065929318241, 0.73248077421585])
-
-    # apply filters
-    filtered_audio = sgnl.lfilter(b_hp, a_hp, audio)
-    filtered_audio = sgnl.lfilter(b_hs, a_hs, filtered_audio)
-
-    return filtered_audio
+from distance import AmbiVisMovingWindow
 
 # uses the same logic as arman's gen_sph_power_map to get frames, then stack them, then format them for an image CNN to read for embeddings
 def ambi_to_tensor(ambiVis):
@@ -31,51 +14,55 @@ def ambi_to_tensor(ambiVis):
         frames.append(frame)
     spatial = np.stack(frames, axis=0)
     spatial = spatial[:, None, :, :]
-    spatial = spatial[None, ...]
-    # gives (1,T,1,H,W) for image CNN
+    # gives (T,1,H,W) for image cnn(ResNet18)
     return torch.from_numpy(spatial).float()
 
-# cached mel banks to avoid recomputing them each call
-_mel_banks = None
 
-# getter for cached mel banks to use in extract features, will need to adjust logic if the parameters of the banks ever need to change
-def get_mel_banks(sr, n_fft, n_mels, fmin, fmax):
-    global _mel_banks
-    if _mel_banks is None: 
-        _mel_banks = librosa.filters.mel(sr=sr, n_fft=n_fft, n_mels=n_mels, fmin=fmin, fmax=fmax)
-    return _mel_banks
-
-# takes wav and sample rate, uses armans ambiVis to get an image of the heatmap with a helper function and put it to a tensor, 
-# then sums the channels mono, applies k-weight filter, gets short time fourier transform, computes rms, gets stft^2 for centroid, computes centroid, 
-# gets cached mel banks (or if first run, creates and caches the mel banks), makes a mel spec, converts the mel spec to dB
-# use dB mel to get onset, convert mel to normalized 0 - 1, then to tensor shape for CNN14 to get embeddings, returns dict of all features needed for analysis
+# expects to take in wav and sample rate from load_wav at the moment, uses an altered ambiVis to get an image of the heatmap at stft rate with a helper function, 
+# puts the heatmap to a tensor, then sums the channels mono, gets short time fourier transform, gets magnitudes, computes rms, gets stft^2 for centroid, computes centroid, 
+# gets square of mags, computes onset with that, returns dict of all features needed for the 2 CNNs and concatenator
 # each scalar(rms, centroid, and onset) are given as float32 with tensor of (T,1)
-def extract_features(wav, sr, angular_res=10., n_fft=512, hop_len=160, win_len=512, n_mels=64, fmin=20.0, fmax=20000.0):
-    ambiVis = SphericalAmbisonicsVisualizer(wav, rate=sr, window=hop_len / sr, angular_res=angular_res)
-    
-    # Tensor shape is (1,T,1,H,W)
+def extract_features(wav, rate, angular_res=10.0):
+    sr = 16000.0
+    n_fft = 512
+    win_len = 400
+    hop_len = 160
+
+    if wav.ndim != 2 or wav.shape[1] != 4:
+        raise ValueError(f"extract_features requires FOA (N,4). Got {wav.shape}")
+
+    if rate != sr:
+        y = resampy.resample(wav, rate, sr, axis=0, filter='kaiser_fast')
+    else:
+        y = wav
+
+    ambiVis = AmbiVisMovingWindow(y, rate=sr, window=win_len, hop=hop_len, angular_res=angular_res)
+    # Tensor shape is (T,1,H,W) 
     spatial_tensor = ambi_to_tensor(ambiVis)
 
-    y = librosa.to_mono(wav)
-    y = k_weight_filter(y, sr)
+    y = librosa.to_mono(y.T)
 
-    stft = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_len, win_length=win_len))
-
-    rms = librosa.feature.rms(S=stft).T
+    stft = librosa.stft(y, n_fft=n_fft, hop_length=hop_len, win_length=win_len, center=False)
+    S, _ = librosa.magphase(stft)
+    
+    # not sure about using y over S here
+    rms = librosa.feature.rms(y=y, frame_length=win_len, hop_length=hop_len, center=False).T
     rms = torch.from_numpy(rms).float()
 
-    power_spec = stft ** 2
-    centroid = librosa.feature.spectral_centroid(S=power_spec, sr=sr).T
+    centroid = librosa.feature.spectral_centroid(S=S, sr=sr).T
     centroid = torch.from_numpy(centroid).float()
 
-    mel_banks = get_mel_banks(sr, n_fft, n_mels, fmin, fmax)
-    mel_spec = mel_banks.dot(power_spec)
-    log_mel = librosa.power_to_db(mel_spec, ref=np.max).astype(np.float32)
-
-    onset = librosa.onset.onset_strength(S=log_mel, sr=sr, hop_length=hop_len)
+    power_spec = S**2
+    onset = librosa.onset.onset_strength(S=power_spec, sr=sr, hop_length=hop_len, center=False)
     onset = torch.from_numpy(onset[:, None]).float()
 
-    log_mel = np.clip((log_mel + 80.0) / 80.0, 0.0, 1.0).T
-    # Tensor shape is (B,1,T,n_mels), matching the docs here: https://speechbrain.readthedocs.io/en/latest/API/speechbrain.lobes.models.Cnn14.html
-    log_mel_tensor = torch.from_numpy(log_mel.copy()).unsqueeze(0).unsqueeze(0).float()
-    return {"logmel": log_mel_tensor, "spatial": spatial_tensor, "rms": rms, "centroid": centroid, "onset": onset}
+    # (N,) wav info for what yamnet expects
+    y_ten = torch.from_numpy(y.astype("float32"))
+
+    size_fix = min(spatial_tensor.shape[0], rms.shape[0], centroid.shape[0], onset.shape[0])
+    spatial_tensor = spatial_tensor[:size_fix]
+    rms = rms[:size_fix]
+    centroid = centroid[:size_fix]
+    onset = onset[:size_fix]
+
+    return {"wav": y_ten, "spatial": spatial_tensor, "rms": rms, "centroid": centroid, "onset": onset}

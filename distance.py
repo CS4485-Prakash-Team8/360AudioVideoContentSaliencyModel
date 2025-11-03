@@ -57,6 +57,59 @@ class SphericalAmbisonicsVisualizer(object):
                 break
             yield rms
 
+class AmbiVisMovingWindow(object):
+    def __init__(self, data, rate=22050, window=512, hop=160, angular_res=2.0):
+        self.data = data
+        self.rate = rate
+        self.window = int(window)
+        self.hop = int(hop)
+        self.angular_res = angular_res
+
+        self.phi_mesh, self.nu_mesh = spherical_mesh(angular_res)
+        mesh_p = [Position(phi, nu, 1., 'polar') for phi, nu in zip(self.phi_mesh.reshape(-1), self.nu_mesh.reshape(-1))]
+
+        ambi_order = np.sqrt(data.shape[1]) - 1
+        self.decoder = AmbiDecoder(mesh_p, AmbiFormat(ambi_order=ambi_order, sample_rate=rate), method='projection')
+
+        # frame count to match the other analyzers 
+        N = data.shape[0]
+        if N < self.window:
+            self.n_frames = 0
+        else:
+            self.n_frames = 1 + (N - self.window) // self.hop
+
+        self.output_rate = float(rate) / float(self.hop)
+        self.frame_dims  = self.phi_mesh.shape
+        self.cur_frame   = -1
+
+    def visualization_rate(self):
+        return self.output_rate
+
+    def mesh(self):
+        return self.nu_mesh, self.phi_mesh
+
+    def get_next_frame(self):
+        self.cur_frame += 1
+        if self.cur_frame >= self.n_frames:
+            return None
+
+        # sliding overlap window to match the stft used for the rest of the audio
+        start = self.cur_frame * self.hop
+        end   = start + self.window
+        chunk = self.data[start:end, :]
+
+        decoded = self.decoder.decode(chunk)
+
+        # Compute RMS at each speaker
+        rms = np.sqrt(np.mean(decoded ** 2, 0)).reshape(self.phi_mesh.shape)
+        return np.flipud(rms)
+    
+    def loop_frames(self):
+        while True:
+            rms = self.get_next_frame()
+            if rms is None:
+                break
+            yield rms
 
 class SphericalSourceVisualizer(object):
     def __init__(self, position_fn, duration, rate=10., angular_res=5):
