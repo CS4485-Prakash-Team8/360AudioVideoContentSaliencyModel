@@ -7,8 +7,8 @@ from torchvision import transforms as T
 from torchvision.utils import save_image
 
 from models.video_model import CubeUNet
-from equi_to_cube import Equi2Cube
-from cube_to_equi import Cube2Equi
+from utils.equi_to_cube import Equi2Cube
+from utils.cube_to_equi import Cube2Equi
 
 EH, EW = 240, 480
 S = 120

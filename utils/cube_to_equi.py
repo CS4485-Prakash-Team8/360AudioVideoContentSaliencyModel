@@ -1,8 +1,8 @@
 import numpy as np
 import torch
 from torch import nn
-from sph_utils import xy2angle, pruned_inf, to_3dsphere, get_face
-from sph_utils import face_to_cube_coord, norm_to_cube
+from utils.sph_utils import xy2angle, pruned_inf, to_3dsphere, get_face
+from utils.sph_utils import face_to_cube_coord, norm_to_cube
 
 class Cube2Equi:
     def __init__(self, input_w):

@@ -67,7 +67,7 @@ https://github.com/xuyanyu-shh/Saliency-detection-in-360-video
 }
 
 #1 install deps
-pip install torch torchvision numpy opencv-python tqdm pillow
+pip install -r requirements.txt
 
 #2 arrange dataset under ./360_Saliency_dataset_2018ECCV (frames + *_gt.npy)
 
