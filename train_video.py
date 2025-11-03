@@ -1,14 +1,15 @@
 # train_video.py
 """
-- Projects equirect frames to 6 cube faces (size S=120) with Equi2Cube
+- Projects equirect frames to 6 cube faces (size S=128) with Equi2Cube
 - Runs CNN on faces (with Cube Padding)
-- Projects prediction back to equirect (240x480) with Cube2Equi
-- Computes SphereMSE on equirect (area-weighted)
+- Projects prediction back to equirect (256x512) with Cube2Equi
+- Optimizes SphereMSE on equirect (area-weighted)
 Run:
   python train_video.py
 """
 
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import cv2
 import torch
 import numpy as np
@@ -16,8 +17,10 @@ from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms as T
 from torch import optim
+import torch.nn.functional as F
+from skimage.metrics import structural_similarity as ssim  # needed by metrics
 
-from models.video_model import CubeResNetSimple
+from models.video_model import CubeRes18UNet
 from utils.smse import SphereMSE
 from utils.equi_to_cube import Equi2Cube
 from utils.cube_to_equi import Cube2Equi
@@ -27,9 +30,9 @@ SAVE_LAST  = "./checkpoints/cube_unet_last.pth"
 SAVE_BEST  = "./checkpoints/cube_unet_best.pth"
 
 # equirect size
-EH, EW = 240, 480
+EH, EW = 256, 512
 # cube face size such that to_equi gives EH×EW (2S×4S)
-S = 120
+S = 128
 
 # Modify depending on your system
 BATCH = 4
@@ -116,6 +119,7 @@ class VRFramesE2C(Dataset):
 
 		return x_faces, gt
 
+
 def train_one_epoch(model, loader, device, loss_fn, optimizer):
 	model.train()
 	total = 0.0
@@ -145,7 +149,10 @@ def train_one_epoch(model, loader, device, loss_fn, optimizer):
 @torch.no_grad()
 def validate(model, loader, device, loss_fn):
 	model.eval()
-	total = 0.0
+	total_loss = 0.0
+	total_mae = total_cc = total_kld = total_sim = total_ssim = total_nss = 0.0
+	n = 0
+
 	for x_faces, gt in tqdm(loader, desc="val"):
 		B = x_faces.size(0)
 		x = x_faces.view(B*6, 4, S, S).to(device)
@@ -161,8 +168,45 @@ def validate(model, loader, device, loss_fn):
 
 		gt = gt.to(device)
 		loss = loss_fn(pred_e, gt)
-		total += loss.item()
-	return total/len(loader)
+		total_loss += loss.item()
+
+		# Move to CPU to compute metrics
+		pred_cpu = pred_e.detach().cpu()
+		gt_cpu = gt.detach().cpu()
+
+		for b in range(B):
+			p = pred_cpu[b, 0].numpy()
+			g = gt_cpu[b, 0].numpy()
+
+			# Normalize
+			p = (p - p.min()) / (p.max() - p.min() + 1e-8)
+			g = (g - g.min()) / (g.max() - g.min() + 1e-8)
+			
+			# === Metrics ===
+			mae = np.mean(np.abs(p - g))
+			cc = np.corrcoef(p.flatten(), g.flatten())[0, 1]
+			kld = np.sum(g * np.log((g + 1e-8) / (p + 1e-8)))
+			sim = np.sum(np.minimum(p, g))
+			ssim_val = ssim(p, g, data_range=1.0)
+			nss = np.mean((p - np.mean(p)) / (np.std(p) + 1e-8) * (g > 0.7))
+			
+			total_mae += mae
+			total_cc += cc
+			total_kld += kld
+			total_sim += sim
+			total_ssim += ssim_val
+			total_nss += nss
+			n += 1
+
+	return {
+		"loss": total_loss / len(loader),
+		"MAE": total_mae / n,
+		"CC": total_cc / n,
+		"KLD": total_kld / n,
+		"SIM": total_sim / n,
+		"SSIM": total_ssim / n,
+		"NSS": total_nss / n
+	}
 
 def main():
 	os.makedirs("./checkpoints", exist_ok=True)
@@ -175,18 +219,23 @@ def main():
 	train_ld = DataLoader(train_ds, batch_size=BATCH, shuffle=True,  num_workers=NUM_WORKERS, pin_memory=True)
 	val_ld   = DataLoader(val_ds,   batch_size=BATCH, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
 
-	model = CubeResNetSimple(in_ch=4, pretrained=True).to(device)
+	model = CubeRes18UNet(in_ch=4, pretrained=True).to(device)
 	criterion = SphereMSE(EH, EW).to(device)
 	optimiz   = optim.SGD(model.parameters(), lr=LR, momentum=0.9, weight_decay=1e-5)
 
 	best = float("inf")
 	for epoch in range(1, EPOCHS+1):
 		tr = train_one_epoch(model, train_ld, device, criterion, optimiz)
-		va = validate(model, val_ld, device, criterion)
-		print(f"[E{epoch}] train {tr:.4f}  val {va:.4f}")
+		metrics = validate(model, val_ld, device, criterion)
+
+		print(f"[E{epoch}] train {tr:.4f}  val {metrics['loss']:.4f} | "
+			  f"MAE {metrics['MAE']:.4f} | CC {metrics['CC']:.4f} | "
+			  f"KLD {metrics['KLD']:.4f} | SIM {metrics['SIM']:.4f} | "
+			  f"SSIM {metrics['SSIM']:.4f} | NSS {metrics['NSS']:.4f}")
+
 		torch.save(model.state_dict(), SAVE_LAST)
-		if va < best:
-			best = va
+		if metrics["loss"] < best:
+			best = metrics["loss"]
 			torch.save(model.state_dict(), SAVE_BEST)
 			print(f"[INFO] new best {best:.4f}")
 
