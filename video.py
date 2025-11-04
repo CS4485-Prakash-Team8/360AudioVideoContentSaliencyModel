@@ -1,6 +1,6 @@
 import os, re
 import numpy as np
-from cmd import runSystemCMD
+from cmd_helper import runSystemCMD
 import skimage.io as sio
 
 OPENCV = 0

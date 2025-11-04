@@ -2,7 +2,7 @@ import os
 import scipy.signal
 import numpy as np
 from video import getFFprobeMeta
-from cmd import runSystemCMD
+from cmd_helper import runSystemCMD
 import librosa
 
 import tempfile
