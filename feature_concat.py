@@ -24,64 +24,50 @@ class SpatialEncoder(nn.Module):
         feats = feats.squeeze(-1).squeeze(-1)
         return self.proj(feats)
 
-# temp yamnet for embeddings until the new one comes in, currently only outputs embedding around 2 times a second and repeats until next is generated
-class YAMNetEncoder(nn.Module):
-    def __init__(self, device="cpu"):
-        super().__init__()
-        self.device = device
-        self.model = yamnet.yamnet(pretrained=True).to(device).eval()
-        self.converter = WaveformToInput()
-
-    @torch.no_grad()
-    def forward(self, wav, sr):
-        x = self.converter(wav.float().to(self.device), sr)
-        emb, _ = self.model(x)
-        emb = emb.squeeze(0)
-        if emb.ndim > 2:
-            emb = emb.squeeze()
-        if emb.ndim == 1:
-            emb = emb.unsqueeze(0)
-        return emb
-
 # concatenates yamn, spatial, and scalars from features to pass to LSTM with shape (T,concat_dim). We'll need to adjust dim sizes when we start seeing results
+##  implemented resnet-50 below
 class AudioFeatureConcatenator(nn.Module):
-    def __init__(self, yamn_dim=1024, spatial_dim=256, scalar_dim=3, concat_dim=256, device='cpu'):
+    def __init__(
+        self,
+        audio_dim: int = 256,    # output dim of AudioResNet50
+        spatial_dim: int = 256,  # output dim of SpatialEncoder
+        scalar_dim: int = 3,     # rms + centroid + onset
+        concat_dim: int = 256,
+        device: str = "cpu",
+    ):
         super().__init__()
         self.device = device
-        self.yamn_encoder = YAMNetEncoder(device=device)
+        self.audio_encoder = AudioResNet50(out_dim=audio_dim).to(device).eval()
         self.spatial_encoder = SpatialEncoder(spatial_dim=spatial_dim).to(device)
-        self.in_dim = yamn_dim + spatial_dim + scalar_dim
+        self.in_dim = audio_dim + spatial_dim + scalar_dim
         self.proj = nn.Linear(self.in_dim, concat_dim)
 
     @torch.no_grad()
-    def forward(self, features, sr=16000):
-        wav = features["wav"]
-        spatial = features["spatial"]
-        rms = features["rms"]
-        centroid = features["centroid"]
-        onset = features["onset"]
+    def forward(self, features: dict, sr: int = 16000):
+        # unpack
+        logmel   = features["logmel"]          # (1,T,M)
+        spatial  = features["spatial"]         # (T,1,H,W)
+        rms      = features["rms"]             # (T,1)
+        centroid = features["centroid"]        # (T,1)
+        onset    = features["onset"]           # (T,1)
 
-        wav = wav.view(-1)
-        n = wav.shape[0]
-        if n < 15600:
-            wav = F.pad(wav, (0, 15600 - n))
-        wav = wav.unsqueeze(0)
-        yam = self.yamn_encoder(wav, sr)
-        T_yam = yam.shape[0]
-        T_spatial = spatial.shape[0]
+        # audio path (ResNet-50 expects (B,1,T,M))
+        if logmel.ndim == 3:
+            logmel = logmel.unsqueeze(1)       # (1,1,T,M)
 
-        rep = max(T_spatial // T_yam, 1)
-        yam_rep = yam.repeat_interleave(rep, dim=0)
 
-        if yam_rep.shape[0] < T_spatial:
-            pad = T_spatial - yam_rep.shape[0]
-            yam_rep = torch.cat([yam_rep, yam_rep[-1:].repeat(pad, 1)], dim=0)
-        else:
-            yam_rep = yam_rep[:T_spatial]
+        audio_emb = self.audio_encoder(logmel.to(self.device, dtype=torch.float32))  # (1,T,256)
+        audio_emb = audio_emb.squeeze(0)       # removing batch dimension (1,T,256) -> (T,256)
 
-        spatial_emb = self.spatial_encoder(spatial)
-        scalars = torch.cat([rms, centroid, onset], dim=-1)
-        scalars = scalars.view(T_spatial, -1)
+        # spatial path
+        spatial_emb = self.spatial_encoder(spatial.to(self.device, dtype=torch.float32))  # (T,256)
 
-        concat = torch.cat([yam_rep, spatial_emb, scalars], dim=-1)
-        return self.proj(concat)
+        # scalar features
+        scalars = torch.cat([rms, centroid, onset], dim=-1).to(self.device, dtype=torch.float32)  # (T,3)
+
+
+        # fuse
+        concat = torch.cat([audio_emb, spatial_emb, scalars], dim=-1)  # (T, 256+256+3)
+        fused  = self.proj(concat)                                     # (T, concat_dim)
+
+        return fused
